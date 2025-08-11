@@ -89,7 +89,7 @@ def create_cubemap_cameras(scene_center, resolution=512):
     
     return cameras
 
-def render_cubemap(model_path, iteration, scene, gaussians, pipeline, background):
+def render_cubemap(model_path, iteration, scene, gaussians, pipeline, background, resolution=512):
     """
     Render cubemap views and save them as separate images.
     """
@@ -114,7 +114,10 @@ def render_cubemap(model_path, iteration, scene, gaussians, pipeline, background
     makedirs(cubemap_path, exist_ok=True)
     
     # Create cubemap cameras
-    cubemap_cameras = create_cubemap_cameras(scene_center, resolution=512)
+    cubemap_cameras = create_cubemap_cameras(scene_center, resolution=resolution)
+    
+    # Store rendered images for potential atlas creation
+    rendered_faces = {}
     
     # Render each face
     for face_name, camera in tqdm(cubemap_cameras.items(), desc="Rendering cubemap faces"):
@@ -124,6 +127,52 @@ def render_cubemap(model_path, iteration, scene, gaussians, pipeline, background
         output_path = os.path.join(cubemap_path, f"cubemap_{face_name}.png")
         torchvision.utils.save_image(rendering, output_path)
         print(f"Saved {face_name} face to {output_path}")
+        
+        # Store for atlas creation
+        rendered_faces[face_name] = rendering
+    
+    # Create atlas layout (optional)
+    create_cubemap_atlas(rendered_faces, cubemap_path)
+
+def create_cubemap_atlas(rendered_faces, output_dir):
+    """
+    Create a single atlas image from the 6 cubemap faces in cross layout:
+           [posy]
+    [negx][posz][posx][negz]
+           [negy]
+    """
+    try:
+        # Get face size (assume all faces are same size)
+        face_size = rendered_faces['posx'].shape[1]  # Height/width
+        
+        # Create atlas canvas (3x4 grid)
+        atlas_height = face_size * 3
+        atlas_width = face_size * 4
+        
+        # Create empty atlas
+        atlas = torch.zeros(3, atlas_height, atlas_width, device=rendered_faces['posx'].device)
+        
+        # Layout faces in cross pattern
+        # Row 0: [empty][posy][empty][empty]
+        atlas[:, 0:face_size, face_size:face_size*2] = rendered_faces['posy']
+        
+        # Row 1: [negx][posz][posx][negz]
+        atlas[:, face_size:face_size*2, 0:face_size] = rendered_faces['negx']
+        atlas[:, face_size:face_size*2, face_size:face_size*2] = rendered_faces['posz']
+        atlas[:, face_size:face_size*2, face_size*2:face_size*3] = rendered_faces['posx']
+        atlas[:, face_size:face_size*2, face_size*3:face_size*4] = rendered_faces['negz']
+        
+        # Row 2: [empty][negy][empty][empty]
+        atlas[:, face_size*2:face_size*3, face_size:face_size*2] = rendered_faces['negy']
+        
+        # Save atlas
+        atlas_path = os.path.join(output_dir, "cubemap_atlas.png")
+        torchvision.utils.save_image(atlas, atlas_path)
+        print(f"Saved cubemap atlas to {atlas_path}")
+        
+    except Exception as e:
+        print(f"Warning: Could not create atlas - {e}")
+        print("Individual face images are still available")
 
 def render_set(model_path, name, iteration, views, gaussians, pipeline, background, train_test_exp):
     render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
@@ -138,7 +187,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         torchvision.utils.save_image(rendering, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
         torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
 
-def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool, cubemap : bool = False):
+def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool, cubemap : bool = False, cubemap_resolution : int = 512):
     with torch.no_grad():
         gaussians = GaussianModel(dataset.sh_degree)
         scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)
@@ -148,7 +197,7 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
 
         if cubemap:
             # Render cubemap instead of standard views
-            render_cubemap(dataset.model_path, scene.loaded_iter, scene, gaussians, pipeline, background)
+            render_cubemap(dataset.model_path, scene.loaded_iter, scene, gaussians, pipeline, background, cubemap_resolution)
         else:
             # Standard rendering mode
             if not skip_train:
@@ -167,10 +216,11 @@ if __name__ == "__main__":
     parser.add_argument("--skip_test", action="store_true")
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--cubemap", action="store_true", help="Render cubemap views instead of COLMAP cameras")
+    parser.add_argument("--cubemap_resolution", default=512, type=int, help="Resolution for each cubemap face (default: 512)")
     args = get_combined_args(parser)
     print("Rendering " + args.model_path)
 
     # Initialize system state (RNG)
     safe_state(args.quiet)
 
-    render_sets(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test, args.cubemap)
+    render_sets(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test, args.cubemap, args.cubemap_resolution)
