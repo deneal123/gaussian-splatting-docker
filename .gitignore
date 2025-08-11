@@ -16,3 +16,8 @@ __pycache__
 *.npy
 *.csv
 *.txt
+
+# Test files for panorama implementation  
+test_panorama*.py
+demo_comparison.py
+validate_cli.py
