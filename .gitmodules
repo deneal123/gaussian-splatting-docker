@@ -5,7 +5,7 @@
 	branch = gaussian_code_union_develop
 [submodule "submodules/depth-anything-v2"]
 	path = submodules/depth-anything-v2
-	url = https://github.com/DepthAnything/Depth-Anything-V2.git
+	url = https://github.com/deneal123/Depth-Anything-V2.git
 [submodule "submodules/simple-knn"]
 	path = submodules/simple-knn
 	url = https://gitlab.inria.fr/bkerbl/simple-knn.git
